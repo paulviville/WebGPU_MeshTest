@@ -107,6 +107,28 @@ const dartEmbedStagingBuffer = device.createBuffer({
 	size: DART_BUFFERS_SIZE,
 	usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
 });
+///
+
+
+
+
+
+/// Creation of the initial EBO
+const buildIndexBufferCode = await fetch("./Shaders/Rendering/buildIndexBuffer.wgsl").then(response => response.text());
+// console.log(buildIndexBufferCode)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -115,6 +137,9 @@ const commandEncoder = device.createCommandEncoder();
 const passEncoder = commandEncoder.beginComputePass();
 passEncoder.end();
 
+
+
+/// DEBUG
 commandEncoder.copyBufferToBuffer(
     dartPhiBuffer,
     0,
@@ -130,10 +155,14 @@ commandEncoder.copyBufferToBuffer(
     0,
     DART_BUFFERS_SIZE,   
 );
+///
 
 const commands = commandEncoder.finish();
 device.queue.submit([commands]);
 
+
+
+/// DEBUG
 await dartPhiStagingBuffer.mapAsync(
 	GPUMapMode.READ,
 	0,
@@ -155,3 +184,4 @@ await dartEmbedStagingBuffer.mapAsync(
 const copyDartEmbedArray = dartEmbedStagingBuffer.getMappedRange(0, 24*4 /*DART_BUFFERS_SIZE */);
 const dartEmbedData = [...(new Uint32Array(copyDartEmbedArray.slice()))];
 console.table(dartEmbedData);
+///

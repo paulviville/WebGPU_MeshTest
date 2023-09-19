@@ -1,0 +1,11 @@
+max binding per compute pipeline: 8
+
+max buffer size : 268.435.456 bytes
+	<=> 67.108.864 u32, i32, f32
+	<=> 16.777.216 vec3, vec4, mat22
+	<=> 5.592.405 mat33
+	<=> 4.194.304 mat44
+
+max map roughly: ~700K hex
+				 ~5M triangles
+
