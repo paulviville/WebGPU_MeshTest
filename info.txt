@@ -9,3 +9,9 @@ max buffer size : 268.435.456 bytes
 max map roughly: ~700K hex
 				 ~5M triangles
 
+
+
+
+
+- VBO and EBO
+position attribute is the VBO

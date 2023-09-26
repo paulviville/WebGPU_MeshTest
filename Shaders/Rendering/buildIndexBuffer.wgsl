@@ -14,27 +14,58 @@ struct Embeds2 {
 	volume: u32,
 }
 
-@group(0) @binding(0)
-var <storage, read> map : array<Darts>;
-@group(0) @binding(1)
-var <storage, read> map : array<Embeds2>;
+struct Cells {
+	darts: u32,
+	vertices: u32,
+	edges: u32,
+	faces: u32,
+	volumes: u32,
+}
 
+
+@group(0) @binding(0)
+var <storage, read_write> darts : array<Dart>;
+@group(0) @binding(1)
+var <storage, read_write> embeds : array<Embeds2>;
+@group(0) @binding(2)
+var <uniform> nbCells : Cells;
+@group(0) @binding(3)
+var <storage, read_write> faceDarts : array<u32>;
+
+@group(1) @binding(0)
+var<storage, read_write> faceOffsets : array<u32>;
+@group(1) @binding(1)
+var<storage, read_write> indexBuffer : array<u32>;
 /// additional bindings
 /// face attribute : offsets storage read/write
 /// index buffer : storage write
 
-override WORKGROUP_SIZE : 64u;
+override WORKGROUP_SIZE : u32 = 64u;
 
 
-fn faceDegree(fd : Dart) -> u32 {
+fn faceDegree(fd : u32) -> u32 {
+	var d = fd;
+	var degree = 0u;
+	loop {
+		degree++;
 
-	return 0;
+		continuing {
+			d = darts[d].phi1;
+			break if (d == fd);
+		}
+	}
+	return degree;
 }
 
 /// for each face count the number of triangles, offset[face] = 3*nbTriangles <=> 3*(degree(face) - 2)
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn computePerFaceOffset(@builtin(global_invocation_id) globalId : vec3<u32>) {
+	if(globalId.x >= nbCells.faces) {
+		return;
+	}
 
+	let fd = faceDarts[globalId.x];
+	faceOffsets[globalId.x] = faceDegree(fd);
 }
 
 /// goes through the list of face offsets and sums them in place

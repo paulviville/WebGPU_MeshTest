@@ -25,6 +25,7 @@ const device = await adapter?.requestDevice();
 if(!device) {
 	throw Error("webGPU intialization failed", adapter, device);
 }
+console.log( device.limits)
 
 
 
@@ -39,7 +40,7 @@ console.log(cellInfoArray);
 const cellInfoBuffer = device.createBuffer({
 	label: "cell info storage buffer",
 	size: cellInfoArray.byteLength,
-	usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+	usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
 });
 
 device.queue.writeBuffer(cellInfoBuffer, 0, cellInfoArray);
@@ -53,6 +54,7 @@ device.queue.writeBuffer(cellInfoBuffer, 0, cellInfoArray);
 
 
 
+
 /// dart topology buffer, vec4u (phi_1, phi1, phi2(, phi3))
 const dartPhiArray = new Uint32Array(cmap.nbDarts() * 4);
 cmap.foreachDart(d => {
@@ -61,7 +63,7 @@ cmap.foreachDart(d => {
 	dartPhiArray[4*d+2] = cmap.phi2[d];
 	// dartPhiArray[4*d+3] = cmap.phi3(d);
 })
-console.log(dartPhiArray);
+// console.log(dartPhiArray);
 
 /// dart cell embeddings, vec4u(vertex2, edge2, face2, volume) 
 const dartEmbedArray = new Uint32Array(cmap.nbDarts() * 4);
@@ -71,10 +73,10 @@ cmap.foreachDart(d => {
 	dartEmbedArray[4*d+2] = cmap.cell(cmap.face, d);
 	dartEmbedArray[4*d+3] = cmap.cell(cmap.volume, d);
 })
-console.log(dartEmbedArray);
+// console.log(dartEmbedArray);
 
-const MAXDARTS = 100000;
-const DART_BUFFERS_SIZE = MAXDARTS * 4 * Uint32Array.BYTES_PER_ELEMENT;
+const MAX_DARTS = 100000;
+const DART_BUFFERS_SIZE = MAX_DARTS * 4 * Uint32Array.BYTES_PER_ELEMENT;
 const dartPhiBuffer = device.createBuffer({
 	label: "dart phi storage buffer",
 	size: DART_BUFFERS_SIZE,
@@ -89,10 +91,10 @@ const dartEmbedBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(dartEmbedBuffer, 0, dartEmbedArray);
 
-const MAXVERTICES = parseInt(MAXDARTS / 3);
+const MAX_VERTICES = parseInt(MAX_DARTS / 3);
 const positionBuffer = device.createBuffer({
 	label: "position/vertex buffer",
-	size: MAXVERTICES,
+	size: MAX_VERTICES * 4 * Float32Array.BYTES_PER_ELEMENT,
 	usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_SRC,
 });
 
@@ -109,18 +111,158 @@ const dartEmbedStagingBuffer = device.createBuffer({
 });
 ///
 
+const MAX_FACES = parseInt(MAX_VERTICES / 3);
+/// first dart of each face
+const faceDartBuffer = device.createBuffer({
+	label: "face darts buffer",
+	size: MAX_FACES * Uint32Array.BYTES_PER_ELEMENT,
+	usage: GPUBufferUsage.STORAGE,
+	mappedAtCreation: true,
+});
+
+const faceDarts = new Uint32Array(faceDartBuffer.getMappedRange());
+cmap.foreach(cmap.face, fd => {
+	faceDarts[cmap.cell(cmap.face, fd)] = fd;
+});
+const facedartsData = [...(new Uint32Array(faceDarts.slice()))];
+console.log(facedartsData)
+faceDartBuffer.unmap();
+
+const faceOffsetBuffer = device.createBuffer({
+	label: "face offset buffer",
+	size: MAX_FACES * Uint32Array.BYTES_PER_ELEMENT,
+	usage: GPUBufferUsage.STORAGE,
+});
+
+const indexBuffer = device.createBuffer({
+	label: "index buffer",
+	size: 5*MAX_FACES * Uint32Array.BYTES_PER_ELEMENT,
+	usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.INDEX,
+});
 
 
+
+
+const WORKGROUP_SIZE = 64;
 
 
 /// Creation of the initial EBO
 const buildIndexBufferCode = await fetch("./Shaders/Rendering/buildIndexBuffer.wgsl").then(response => response.text());
 // console.log(buildIndexBufferCode)
+const buildIndexBufferModule = device.createShaderModule({
+	label: "build index buffer shader module",
+	code: buildIndexBufferCode,
+});
 
+const mapBindGroupLayout = device.createBindGroupLayout({
+	label: 'map bind group layout',
+	entries: [
+		{ /// darts topology
+			binding: 0,
+			visibility: GPUShaderStage.COMPUTE,
+			buffer: {
+				type: 'storage',
+			},
+		},
+		{ /// embeddings
+			binding: 1,
+			visibility: GPUShaderStage.COMPUTE,
+			buffer: {
+				type: 'storage',
+			},
+		},
+		{ /// nb cells uniform
+			binding: 2,
+			visibility: GPUShaderStage.COMPUTE,
+			buffer: { },
+		},
+		{ /// face Darts
+			binding: 3,
+			visibility: GPUShaderStage.COMPUTE,
+			buffer: { 
+				type: 'storage',
+			},
+		},
 
+		
+	],
+});
 
+const buildIndexBufferBindGroupLayout = device.createBindGroupLayout({
+	label: 'build index buffer bind group layout',
+	entries: [
+		{ /// faceOffsets
+			binding: 0,
+			visibility: GPUShaderStage.COMPUTE,
+			buffer: {
+				type: 'storage',
+			}
+		},
+		{ /// indexBuffer
+			binding: 1,
+			visibility: GPUShaderStage.COMPUTE,
+			buffer: {
+				type: 'storage',
+			}
+		},
+	],
+});
 
+const mapBindGroup = device.createBindGroup({
+	label: 'map bind group',
+	layout: mapBindGroupLayout,
+	entries: [{
+		binding: 0,
+		resource: { buffer: dartPhiBuffer },
+	},
+	{
+		binding: 1,
+		resource: { buffer: dartEmbedBuffer },
+	},
+	{
+		binding: 2,
+		resource: { buffer: cellInfoBuffer },
+	},
+	{
+		binding: 3,
+		resource: { buffer: faceDartBuffer },
+	},
+	]
+});
 
+const buildIndexBufferBindGroup = device.createBindGroup({
+	label: 'build index buffer bind group',
+	layout: buildIndexBufferBindGroupLayout,
+	entries: [{
+		binding: 0,
+		resource: { buffer: faceOffsetBuffer },
+	},
+	{
+		binding: 1,
+		resource: { buffer: indexBuffer },
+	},
+	]
+});
+
+const buildIndexBufferPipelineLayout = device.createPipelineLayout({
+	label: 'build index buffer pipeline layout',
+	bindGroupLayouts: [
+		mapBindGroupLayout,
+		buildIndexBufferBindGroupLayout,
+	],
+});
+
+const computePerFaceOffsetPipeline = device.createComputePipeline({
+	label: 'compute per face offset pipeline',
+	layout: buildIndexBufferPipelineLayout,
+	compute: {
+		module: buildIndexBufferModule,
+		entryPoint: 'computePerFaceOffset',
+		constants: {
+			WORKGROUP_SIZE,
+		}
+	}
+});
 
 
 
@@ -172,7 +314,7 @@ await dartPhiStagingBuffer.mapAsync(
 
 const copyDartPhiArray = dartPhiStagingBuffer.getMappedRange(0, 24*4 /*DART_BUFFERS_SIZE */);
 const dartPhiData = [...(new Uint32Array(copyDartPhiArray.slice()))];
-console.table(dartPhiData);
+// console.table(dartPhiData);
 
 await dartEmbedStagingBuffer.mapAsync(
 	GPUMapMode.READ,
@@ -183,5 +325,5 @@ await dartEmbedStagingBuffer.mapAsync(
 
 const copyDartEmbedArray = dartEmbedStagingBuffer.getMappedRange(0, 24*4 /*DART_BUFFERS_SIZE */);
 const dartEmbedData = [...(new Uint32Array(copyDartEmbedArray.slice()))];
-console.table(dartEmbedData);
+// console.table(dartEmbedData);
 ///
